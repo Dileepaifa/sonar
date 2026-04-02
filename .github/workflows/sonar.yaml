@@ -1,23 +1,47 @@
-name: SonarQube Analysis
+name: SonarQube Advanced Security Scan
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened]
+    branches: [ main ]
 
 jobs:
-  sonarqube:
-    name: SonarQube Scan
+  sonarqube_job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          fetch-depth: 0
 
+      # 1. Run the Scanner
       - name: SonarQube Scan
+        id: scan
         uses: sonarsource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      # 2. Wait for SonarQube to finish processing (needed for API data)
+      - name: Wait for Analysis
+        run: sleep 30
+
+      # 3. Fetch Full JSON Report via API
+      # This gets the 'Measures' (Bugs, Vulnerabilities, Code Smells)
+      - name: Fetch JSON Report
+        run: |
+          curl -u ${{ secrets.SONAR_TOKEN }}: \
+          "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=nodejs-sample-project&metricKeys=bugs,vulnerabilities,code_smells,security_rating,sqale_index" \
+          -o full-report.json
+
+      # 4. Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # 5. Upload Full JSON to S3
+      - name: Upload JSON to S3
+        run: |
+          aws s3 cp full-report.json s3://sonarqube-reports-aifa/${{ github.sha }}/analysis-results.json

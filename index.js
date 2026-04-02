@@ -1,22 +1,34 @@
 const express = require('express');
+const mysql = require('mysql');
+const crypto = require('crypto');
+const { exec } = require('child_process');
+
 const app = express();
+const connection = mysql.createConnection({ host: 'localhost', user: 'root', password: 'password123' });
 
-// 1. HARDCODED PASSWORD (Security Risk)
-const password = "password123"; 
+app.get('/user-data', (req, res) => {
+    const userId = req.query.id;
 
-// 2. EVIL EVAL (Critical Security Risk)
-const user_input = "console.log('hi')";
-eval(user_input); 
+    // 1. SQL Injection (Critical)
+    // Directly concatenating user input into a query
+    const query = "SELECT * FROM users WHERE id = " + userId;
+    
+    // 2. Command Injection (Blocker)
+    // Running system commands using unsanitized user input
+    exec(`ping -c 1 ${req.query.host}`, (error) => {
+        if (error) console.log(error);
+    });
 
-// 3. UNUSED VARIABLE (Code Smell)
-var x = 10; 
+    // 3. Insecure Hashing (Security Hotspot)
+    // MD5 is cryptographically broken and should not be used for sensitive data
+    const secretHash = crypto.createHash('md5').update('secret_data').digest('hex');
 
-app.get('/', (req, res) => {
-  // 4. WEAK ENCRYPTION (Security Hotspot)
-  const crypto = require('crypto');
-  const hash = crypto.createHash('md5').update('data').digest('hex');
-  
-  res.send('Testing SonarQube Analysis');
+    // 4. Hardcoded Sensitive Information
+    const aws_key = "AKIAIOSFODNN7EXAMPLE"; 
+
+    connection.query(query, (err, results) => {
+        res.send({ data: results, hash: secretHash });
+    });
 });
 
-app.listen(3000);
+app.listen(3000, () => console.log('Vulnerable app listening on port 3000'));
