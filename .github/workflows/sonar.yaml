@@ -2,7 +2,7 @@ name: SonarQube Advanced Security Scan
 
 on:
   push:
-    branches: [ main ]
+    branches: [ develop ]
 
 jobs:
   sonarqube_job:
