@@ -75,7 +75,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: 7. Upload to S3
+      - name: 7. Upload to S3 bucket
         run: |
           # Use brackets and quotes for safer variable expansion
           export BASE_PATH="s3://your-bucket-name/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
