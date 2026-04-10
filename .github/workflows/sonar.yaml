@@ -57,7 +57,7 @@ jobs:
         run: |
           echo "## 🛡️ SonarQube Scan: ${{ github.ref_name }}" > summary.md
           echo "### Metadata" >> summary.md
-          echo "- **Project:** NodeJS Sample Project" >> summary.md
+          echo "- **Project:** aifapython" >> summary.md
           echo "- **Commit SHA:** ${{ github.sha }}" >> summary.md
           echo "- **Triggered By:** ${{ github.actor }}" >> summary.md
           echo "" >> summary.md
