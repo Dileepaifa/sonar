@@ -34,7 +34,7 @@ jobs:
           -o raw_metrics.json
 
           jq -n \
-            --arg project "NodeJS Sample Project" \
+            --arg project "AIFAPythonAI" \
             --arg branch "${{ github.ref_name }}" \
             --arg commit "${{ github.sha }}" \
             --arg author "${{ github.actor }}" \
