@@ -1,47 +1,83 @@
-name: SonarQube Advanced Security Scan
+name: SonarQube V2 - Security & Archival Pipeline
 
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  sonarqube_job:
+  security_scan:
+    name: SonarQube Scan & S3 Archival
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 1. Run the Scanner
-      - name: SonarQube Scan
-        id: scan
+      - name: 2. Run SonarQube Scanner
+        id: sonar
         uses: sonarsource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # 2. Wait for SonarQube to finish processing (needed for API data)
-      - name: Wait for Analysis
+      - name: 3. Wait for Background Task
+        # Essential for t3.medium to finish processing analysis
         run: sleep 30
 
-      # 3. Fetch Full JSON Report via API
-      # This gets the 'Measures' (Bugs, Vulnerabilities, Code Smells)
-      - name: Fetch JSON Report
+      - name: 4. Fetch and Enrich Report Data
+        # We use jq to combine SonarQube metrics with GitHub metadata
         run: |
           curl -u ${{ secrets.SONAR_TOKEN }}: \
-          "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=nodejs-sample-project&metricKeys=bugs,vulnerabilities,code_smells,security_rating,sqale_index" \
-          -o full-report.json
+          "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=nodejs-sample-project&metricKeys=bugs,vulnerabilities,code_smells,security_rating,sqale_index,security_hotspots" \
+          -o raw_metrics.json
 
-      # 4. Configure AWS Credentials
-      - name: Configure AWS Credentials
+          jq -n \
+            --arg project "NodeJS Sample Project" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg commit "${{ github.sha }}" \
+            --arg author "${{ github.actor }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --argjson sonar "$(<raw_metrics.json)" \
+            '{
+              report_info: {
+                project_name: $project,
+                branch: $branch,
+                commit: $commit,
+                author: $author,
+                github_action_url: $run_url,
+                scan_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+              },
+              metrics: $sonar.component.measures | map({(.metric): .value}) | add
+            }' > enriched-sonar-report.json
+
+      - name: 5. Generate Markdown Summary for S3
+        # Creates a human-readable file for quick auditing in S3
+        run: |
+          echo "## 🛡️ SonarQube Scan: ${{ github.ref_name }}" > summary.md
+          echo "### Metadata" >> summary.md
+          echo "- **Project:** NodeJS Sample Project" >> summary.md
+          echo "- **Commit SHA:** ${{ github.sha }}" >> summary.md
+          echo "- **Triggered By:** ${{ github.actor }}" >> summary.md
+          echo "" >> summary.md
+          echo "### Scan Metrics" >> summary.md
+          echo "| Metric | Value |" >> summary.md
+          echo "| :--- | :--- |" >> summary.md
+          jq -r '.metrics | to_entries | .[] | "| \(.key) | \(.value) |"' enriched-sonar-report.json >> summary.md
+
+      - name: 6. Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: us-east-1
 
-      # 5. Upload Full JSON to S3
-      - name: Upload JSON to S3
+      - name: 7. Upload to S3
+        # Organized by Project Name and Branch
         run: |
-          aws s3 cp full-report.json s3://sonarqube-reports-aifa/${{ github.sha }}/analysis-results.json
+          BASE_PATH="s3://your-bucket-name/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
+          aws s3 cp enriched-sonar-report.json $BASE_PATH/report.json
+          aws s3 cp summary.md $BASE_PATH/summary.md
