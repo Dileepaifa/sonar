@@ -75,13 +75,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: 7. Upload to S3 bucket
+      - name: 7. Upload to S3
         run: |
-          # Use brackets and quotes for safer variable expansion
-          export BASE_PATH="s3://your-bucket-name/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
+          export BASE_PATH="s3://sonarqube-reports-aifa/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
           
-          aws s3 cp enriched-sonar-report.json "${BASE_PATH}/report.json"
-          aws s3 cp summary.md "${BASE_PATH}/summary.md"
+          # Add the --region flag for certainty
+          aws s3 cp enriched-sonar-report.json "${BASE_PATH}/report.json" --region us-east-1
+          aws s3 cp summary.md "${BASE_PATH}/summary.md" --region us-east-1
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
