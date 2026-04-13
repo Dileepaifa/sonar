@@ -1,4 +1,4 @@
-name: SonarQube V - Detailed Metric Segregation
+name: SonarQube V - Full Security & Metadata Pipeline
 
 on:
   push:
@@ -19,27 +19,31 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: 3. Wait for Processing
+      - name: 3. Wait for Analysis
         run: sleep 30
 
-      - name: 4. Fetch Issues and Segregate by Severity
+      - name: 4. Fetch, Segregate & Add Metadata
         run: |
-          # Fetch all open issues for the project
+          # Fetch project issues via Web API
           curl -u ${{ secrets.SONAR_TOKEN }}: \
           "${{ secrets.SONAR_HOST_URL }}/api/issues/search?componentKeys=nodejs-sample-project&resolved=false&ps=500" \
           -o detailed_issues.json
 
-          # Use jq to map Sonar severities to your categories and count them per metric type
+          # JQ Logic to build report with custom severity mapping
           jq -n \
-            --arg project "AIFAPythonAI_ctg" \
+            --arg project "pythonAILBS" \
             --arg branch "${{ github.ref_name }}" \
             --arg commit "${{ github.sha }}" \
+            --arg author "${{ github.actor }}" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --argjson data "$(<detailed_issues.json)" \
             '{
               report_info: {
                 project_name: $project,
                 branch: $branch,
-                commit: $commit,
+                author: $author,
+                commit_hash: $commit,
+                github_action_url: $run_url,
                 timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
               },
               segregated_metrics: ($data.issues | group_by(.type) | map({
@@ -51,11 +55,11 @@ jobs:
               }))
             }' > enriched-sonar-report.json
 
-      - name: 5. Create Human-Readable Summary
+      - name: 5. Create Markdown Summary
         run: |
-          echo "## 🛡️ Detailed Security & Quality Segregation" > summary.md
-          echo "- **Project:** AIFAPythonAI_ctg" >> summary.md
-          echo "- **Branch:** ${{ github.ref_name }}" >> summary.md
+          echo "## 🛡️ Security Audit: ${{ github.ref_name }}" > summary.md
+          echo "- **Triggered By:** ${{ github.actor }}" >> summary.md
+          echo "- **Workflow Link:** [Click Here](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> summary.md
           echo "" >> summary.md
           echo "| Metric Type | Basic | Intermediate | High | **Total** |" >> summary.md
           echo "| :--- | :---: | :---: | :---: | :---: |" >> summary.md
@@ -70,7 +74,6 @@ jobs:
 
       - name: 7. Upload to S3
         run: |
-          # Note: Ensure S3 IAM Policy has the /* suffix
           export BASE_PATH="s3://sonarqube-reports-aifa/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
           aws s3 cp enriched-sonar-report.json "${BASE_PATH}/report.json"
           aws s3 cp summary.md "${BASE_PATH}/summary.md"

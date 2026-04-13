@@ -8,13 +8,12 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# 1. HARDCODED SECRET (High Severity - Vulnerability)
-# SonarQube will flag this as a Blocker/Critical issue.
-SECRET_KEY = "AIFA_LABS_INTERNAL_TOKEN_DO_NOT_SHARE_12345"
+# 1. HARDCODED SENSITIVE DATA (High Severity - Vulnerability)
+# Flagged as a "Critical" security risk.
+AWS_SECRET_CONFIG = "AKIAIOSFODNN7EXAMPLE/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
-# 2. INSECURE DATABASE CONNECTION (Intermediate Severity - Code Smell/Bug)
-# Using a hardcoded path and unencrypted SQLite
-DB_PATH = "/tmp/test_db.sqlite"
+# 2. INSECURE DATABASE PATH (Basic - Code Smell)
+DB_PATH = "/tmp/aifa_test_db.sqlite"
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -22,57 +21,47 @@ def login():
     password = request.form.get('password')
 
     # 3. SQL INJECTION (High Severity - Vulnerability)
-    # Directly formatting strings into SQL queries.
+    # Blocker: String formatting directly into SQL.
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    query = "SELECT * FROM users WHERE username = '%s' AND password = '%s'" % (username, password)
+    query = "SELECT * FROM users WHERE username = '%s'" % username
     cursor.execute(query)
-    user = cursor.fetchone()
     
-    # 4. WEAK HASHING (Basic Severity - Security Hotspot)
-    # MD5 is outdated and insecure for passwords.
+    # 4. WEAK HASHING (Intermediate - Security Hotspot)
+    # MD5 is cryptographically broken.
     h = hashlib.md5(password.encode()).hexdigest()
     
-    return f"User authenticated with hash: {h}"
+    return f"Logged in user hash: {h}"
 
-@app.route('/process-data', methods=['POST'])
-def process_data():
-    # 5. INSECURE DESERIALIZATION (High Severity - Vulnerability)
-    # Using pickle.loads on user-provided data leads to Remote Code Execution (RCE).
-    data = request.form.get('data')
-    decoded_data = base64.b64decode(data)
-    obj = pickle.loads(decoded_data) # CRITICAL ISSUE
-    return "Data Processed"
-
-@app.route('/debug-ping', methods=['GET'])
-def debug_ping():
-    # 6. COMMAND INJECTION (High Severity - Vulnerability)
-    # shell=True with unsanitized input is a major security flaw.
-    hostname = request.args.get('host')
-    command = f"ping -c 1 {hostname}"
-    result = subprocess.check_output(command, shell=True) 
+@app.route('/internal/exec', methods=['POST'])
+def run_internal_tool():
+    # 5. COMMAND INJECTION (High Severity - Vulnerability)
+    # Blocker: shell=True with user input allows RCE.
+    cmd_param = request.form.get('cmd')
+    result = subprocess.check_output(f"ls -la {cmd_param}", shell=True)
     return result
 
-@app.route('/useless-function')
-def useless():
-    # 7. MULTIPLE CODE SMELLS (Basic to Intermediate)
-    # - Unused variables
-    # - Deep nesting
-    # - Large functions
-    # - Broad Exception handling
+@app.route('/load-config', methods=['POST'])
+def load_config():
+    # 6. INSECURE DESERIALIZATION (High Severity - Vulnerability)
+    # Critical: Unpickling user-controlled data.
+    data = request.form.get('payload')
+    user_obj = pickle.loads(base64.b64decode(data))
+    return "Configuration Loaded"
+
+@app.route('/debug')
+def debug_info():
+    # 7. MULTIPLE CODE SMELLS (Basic/Intermediate)
+    # Nested try-except, unused variables, and broad exceptions.
     try:
-        a = 10
-        b = 20
-        c = 30
-        if a < b:
-            if b < c:
-                if True:
-                    print("Deeply nested logic")
-        unused_var = "I am never used"
-    except Exception: # Too broad exception
-        pass
-    return "Check your smells"
+        unused_info = "Sensitive Traceback"
+        x = 1/0
+    except Exception:
+        # 8. SENSITIVE DATA EXPOSURE (Intermediate)
+        import traceback
+        return traceback.format_exc()
 
 if __name__ == "__main__":
-    # 8. RUNNING IN DEBUG MODE (Intermediate - Vulnerability)
-    app.run(debug=True, host='0.0.0.0')
+    # 9. INSECURE SERVER CONFIG (Intermediate - Vulnerability)
+    # Running on 0.0.0.0 with debug=True.
+    app.run(debug=True, host='0.0.0.0', port=5000)
