@@ -1,8 +1,8 @@
-name: SonarQube V - Severity Classification Pipeline
+name: SonarQube V - Detailed Metric Segregation
 
 on:
   push:
-    branches: [ develop ]
+    branches: [ main, develop ]
 
 jobs:
   analyze_and_archive:
@@ -22,20 +22,19 @@ jobs:
       - name: 3. Wait for Processing
         run: sleep 30
 
-      - name: 4. Fetch, Enrich & Classify Severity
+      - name: 4. Fetch Issues and Segregate by Severity
         run: |
-          # Fetch raw metrics
+          # Fetch all open issues for the project
           curl -u ${{ secrets.SONAR_TOKEN }}: \
-          "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=nodejs-sample-project&metricKeys=bugs,vulnerabilities,code_smells,security_rating" \
-          -o raw_metrics.json
+          "${{ secrets.SONAR_HOST_URL }}/api/issues/search?componentKeys=nodejs-sample-project&resolved=false&ps=500" \
+          -o detailed_issues.json
 
-          # Calculate Severity Level using jq
-          # Logic: Total (Bugs + Vulnerabilities)
+          # Use jq to map Sonar severities to your categories and count them per metric type
           jq -n \
-            --arg project "NodeJS Sample Project" \
+            --arg project "AIFAPythonAI_ctg" \
             --arg branch "${{ github.ref_name }}" \
             --arg commit "${{ github.sha }}" \
-            --argjson sonar "$(<raw_metrics.json)" \
+            --argjson data "$(<detailed_issues.json)" \
             '{
               report_info: {
                 project_name: $project,
@@ -43,30 +42,24 @@ jobs:
                 commit: $commit,
                 timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
               },
-              metrics: ($sonar.component.measures | map({(.metric): (.value | tonumber)}) | add),
-            }' | jq '
-              .metrics.total_issues = (.metrics.bugs + .metrics.vulnerabilities) |
-              .severity_level = (
-                if .metrics.total_issues == 0 then "BASIC"
-                elif .metrics.total_issues <= 5 then "INTERMEDIATE"
-                else "HIGH"
-                end
-              )' > enriched-sonar-report.json
+              segregated_metrics: ($data.issues | group_by(.type) | map({
+                type: .[0].type,
+                basic: (map(select(.severity == "INFO" or .severity == "MINOR")) | length),
+                intermediate: (map(select(.severity == "MAJOR")) | length),
+                high: (map(select(.severity == "CRITICAL" or .severity == "BLOCKER")) | length),
+                total: length
+              }))
+            }' > enriched-sonar-report.json
 
       - name: 5. Create Human-Readable Summary
         run: |
-          # Use jq to extract the level we just calculated
-          LEVEL=$(jq -r '.severity_level' enriched-sonar-report.json)
-          
-          echo "## 🛡️ Security Audit Report" > summary.md
-          echo "### RISK LEVEL: **$LEVEL**" >> summary.md
-          echo "- **Project:** NodeJS Sample Project" >> summary.md
+          echo "## 🛡️ Detailed Security & Quality Segregation" > summary.md
+          echo "- **Project:** AIFAPythonAI_ctg" >> summary.md
           echo "- **Branch:** ${{ github.ref_name }}" >> summary.md
           echo "" >> summary.md
-          echo "#### Detailed Metrics" >> summary.md
-          echo "| Metric | Count |" >> summary.md
-          echo "| :--- | :--- |" >> summary.md
-          jq -r '.metrics | to_entries | .[] | "| \(.key) | \(.value) |"' enriched-sonar-report.json >> summary.md
+          echo "| Metric Type | Basic | Intermediate | High | **Total** |" >> summary.md
+          echo "| :--- | :---: | :---: | :---: | :---: |" >> summary.md
+          jq -r '.segregated_metrics[] | "| \(.type) | \(.basic) | \(.intermediate) | \(.high) | **\(.total)** |"' enriched-sonar-report.json >> summary.md
 
       - name: 6. Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -77,7 +70,7 @@ jobs:
 
       - name: 7. Upload to S3
         run: |
-          # Note: Ensure S3 IAM Policy has the /* suffix to avoid AccessDenied
+          # Note: Ensure S3 IAM Policy has the /* suffix
           export BASE_PATH="s3://sonarqube-reports-aifa/reports/nodejs-sample-project/${{ github.ref_name }}/${{ github.sha }}"
           aws s3 cp enriched-sonar-report.json "${BASE_PATH}/report.json"
           aws s3 cp summary.md "${BASE_PATH}/summary.md"

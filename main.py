@@ -1,90 +1,78 @@
-from flask import Flask, request, jsonify, redirect
-import sqlite3
-import jwt
 import os
 import subprocess
+import pickle
+import base64
+import sqlite3
+import hashlib
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# Hardcoded secret (Vulnerability #1)
-SECRET_KEY = "secret123"
+# 1. HARDCODED SECRET (High Severity - Vulnerability)
+# SonarQube will flag this as a Blocker/Critical issue.
+SECRET_KEY = "AIFA_LABS_INTERNAL_TOKEN_DO_NOT_SHARE_12345"
 
-# Hardcoded DB path (Vulnerability #2)
-DB_PATH = "users.db"
+# 2. INSECURE DATABASE CONNECTION (Intermediate Severity - Code Smell/Bug)
+# Using a hardcoded path and unencrypted SQLite
+DB_PATH = "/tmp/test_db.sqlite"
 
-# Create DB (for demo)
-conn = sqlite3.connect(DB_PATH)
-conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)")
-conn.commit()
-conn.close()
-
-
-# SQL Injection (Vulnerability #3)
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    username = data.get("username")
-    password = data.get("password")
+    username = request.form.get('username')
+    password = request.form.get('password')
 
+    # 3. SQL INJECTION (High Severity - Vulnerability)
+    # Directly formatting strings into SQL queries.
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
-    # Unsafe query
-    query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
+    query = "SELECT * FROM users WHERE username = '%s' AND password = '%s'" % (username, password)
     cursor.execute(query)
-
     user = cursor.fetchone()
-    conn.close()
+    
+    # 4. WEAK HASHING (Basic Severity - Security Hotspot)
+    # MD5 is outdated and insecure for passwords.
+    h = hashlib.md5(password.encode()).hexdigest()
+    
+    return f"User authenticated with hash: {h}"
 
-    if user:
-        # Weak JWT (Vulnerability #4)
-        token = jwt.encode({"user": username}, SECRET_KEY, algorithm="HS256")
-        return jsonify({"token": token})
-    else:
-        return "Invalid credentials", 401
+@app.route('/process-data', methods=['POST'])
+def process_data():
+    # 5. INSECURE DESERIALIZATION (High Severity - Vulnerability)
+    # Using pickle.loads on user-provided data leads to Remote Code Execution (RCE).
+    data = request.form.get('data')
+    decoded_data = base64.b64decode(data)
+    obj = pickle.loads(decoded_data) # CRITICAL ISSUE
+    return "Data Processed"
 
-
-# Command Injection (Vulnerability #5)
-@app.route('/ping')
-def ping():
-    host = request.args.get('host')
-    result = subprocess.getoutput(f"ping -c 1 {host}")
+@app.route('/debug-ping', methods=['GET'])
+def debug_ping():
+    # 6. COMMAND INJECTION (High Severity - Vulnerability)
+    # shell=True with unsanitized input is a major security flaw.
+    hostname = request.args.get('host')
+    command = f"ping -c 1 {hostname}"
+    result = subprocess.check_output(command, shell=True) 
     return result
 
-
-# XSS (Vulnerability #6)
-@app.route('/search')
-def search():
-    q = request.args.get('q')
-    return f"<h1>Results for: {q}</h1>"
-
-
-# Open Redirect (Vulnerability #7)
-@app.route('/redirect')
-def open_redirect():
-    url = request.args.get('url')
-    return redirect(url)
-
-
-# Path Traversal (Vulnerability #8)
-@app.route('/read-file')
-def read_file():
-    filename = request.args.get('file')
+@app.route('/useless-function')
+def useless():
+    # 7. MULTIPLE CODE SMELLS (Basic to Intermediate)
+    # - Unused variables
+    # - Deep nesting
+    # - Large functions
+    # - Broad Exception handling
     try:
-        with open(filename, 'r') as f:
-            return f.read()
-    except Exception as e:
-        return str(e)
+        a = 10
+        b = 20
+        c = 30
+        if a < b:
+            if b < c:
+                if True:
+                    print("Deeply nested logic")
+        unused_var = "I am never used"
+    except Exception: # Too broad exception
+        pass
+    return "Check your smells"
 
-
-# Insecure file upload (Vulnerability #9)
-@app.route('/upload', methods=['POST'])
-def upload():
-    file = request.files['file']
-    file.save(os.path.join("uploads", file.filename))  # no validation
-    return "File uploaded"
-
-
-# Debug mode enabled (Vulnerability #10)
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    # 8. RUNNING IN DEBUG MODE (Intermediate - Vulnerability)
+    app.run(debug=True, host='0.0.0.0')
